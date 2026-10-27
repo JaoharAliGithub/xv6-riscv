@@ -61,6 +61,10 @@ timerinit()
   // allow supervisor to use stimecmp and time.
   w_mcounteren(r_mcounteren() | 2);
 
+  // allow user mode to read time too (rdtime), so user programs can
+  // calibrate busy loops. Bit 1 (TM) of scounteren.
+  asm volatile("csrs scounteren, %0" : : "r"(2));
+
   // ask for the very first timer interrupt.
   w_stimecmp(r_time() + 1000000);
 }

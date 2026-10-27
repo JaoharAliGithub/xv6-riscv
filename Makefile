@@ -149,6 +149,7 @@ UPROGS=\
 	$U/_wc\
 	$U/_zombie\
 	$U/_tracedump\
+	$U/_workload\
 	$U/_logstress\
 	$U/_forphan\
 	$U/_dorphan\
