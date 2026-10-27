@@ -2,7 +2,7 @@
 // Timestamps are r_time() units: QEMU virt's timebase is 10 MHz,
 // so one unit is 100 ns.
 
-#define TRACE_N 4096 // ring capacity (records)
+#define TRACE_N 32768 // ring capacity (records); 48 B each
 
 // record types
 #define TR_FORK  1 // process created; aux = parent pid
