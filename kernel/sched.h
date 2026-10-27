@@ -8,6 +8,10 @@
 // and uptime() stays at 100 ms regardless of the quantum.
 #define SCHED_QUANTUM_US 10000
 
+// Aging: a process's SJF key is reduced by (time waited in the ready
+// queue) / SCHED_AGING, so nothing starves. 0 disables aging (pure SJF).
+#define SCHED_AGING 1
+
 // Exponential-averaging weight for the burst predictor, out of 256:
 // tau = (ALPHA*t + (256-ALPHA)*tau) / 256. 192 is alpha = 0.75.
 #define SCHED_ALPHA 192

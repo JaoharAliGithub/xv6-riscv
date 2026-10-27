@@ -96,6 +96,7 @@ struct proc {
   uint64 tau;           // predicted length of the next CPU burst
   uint64 burst_acc;     // CPU time so far in the current (unfinished) burst
   uint64 nbursts;       // completed bursts, for tau's first sample
+  uint64 readyat;       // r_time() when p last became RUNNABLE
 
   // wait_lock must be held when using this:
   struct proc *parent; // Parent process

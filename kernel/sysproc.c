@@ -112,19 +112,23 @@ sys_uptime(void)
   return xticks;
 }
 
-// int setsched(int policy, int quantum_us)
-// Sets the scheduling policy (SCHED_RR / SCHED_SJF, -1 = unchanged) and
-// the quantum in microseconds (<= 0 = unchanged). Returns the previous
-// policy. A quantum shorter than the 1 us host timer resolution would
-// just thrash, so it is clamped to 100 us.
+// int setsched(int policy, int quantum_us, int aging)
+// Sets the scheduling policy (SCHED_RR / SCHED_SJF, -1 = unchanged), the
+// quantum in microseconds (<= 0 = unchanged) and the aging divisor
+// (0 = pure SJF, < 0 = unchanged). Returns the previous policy. A
+// quantum shorter than the 1 us host timer resolution would just
+// thrash, so it is clamped to 100 us.
 uint64
 sys_setsched(void)
 {
-  int policy, quantum_us;
+  int policy, quantum_us, aging;
   int old = sched_policy;
 
   argint(0, &policy);
   argint(1, &quantum_us);
+  argint(2, &aging);
+  if (aging >= 0)
+    sched_aging = aging;
   if (policy == SCHED_RR || policy == SCHED_SJF)
     sched_policy = policy;
   else if (policy != -1)

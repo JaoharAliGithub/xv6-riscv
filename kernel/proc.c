@@ -231,6 +231,7 @@ userinit(void)
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
+  p->readyat = r_time();
 
   release(&p->lock);
 }
@@ -304,6 +305,7 @@ kfork(void)
 
   acquire(&np->lock);
   np->state = RUNNABLE;
+  np->readyat = r_time();
   release(&np->lock);
 
   trace_record(TR_FORK, pid, 0xff, r_time(), 0, p->pid, np->name);
@@ -429,6 +431,7 @@ kwait(uint64 addr)
 // Read without locks: a torn read only affects which process runs next.
 int sched_policy = SCHED_RR;
 uint64 sched_quantum = (uint64)SCHED_QUANTUM_US * 10; // r_time() units
+int sched_aging = SCHED_AGING;
 
 // Update p's burst prediction after it ran for len units and stopped
 // for reason why. A CPU burst, in the SJF sense, is the CPU time between
@@ -451,14 +454,25 @@ burst_update(struct proc *p, uint64 len, int why)
 }
 
 // SJF ranking key, lower runs first: the predicted length of p's
-// current burst. The burst is known to be at least burst_acc long
-// already, so a process that has outrun its prediction is ranked by
-// what it has shown, not by tau; that is what demotes a CPU hog whose
-// prediction is stale. Caller holds p->lock.
+// current burst, minus an aging credit for time spent waiting to run.
+//
+// The burst is known to be at least burst_acc long already, so a
+// process that has outrun its prediction is ranked by what it has
+// shown, not by tau; that is what demotes a CPU hog whose prediction
+// is stale. Aging (wait / sched_aging) is what stops pure SJF from
+// starving a process whose prediction is merely larger than everyone
+// else's: usertests' reparent test fills the process table with
+// orphans that init never gets scheduled to reap without it.
+// Caller holds p->lock.
 static inline uint64
-burst_key(struct proc *p)
+burst_key(struct proc *p, uint64 now)
 {
-  return p->tau > p->burst_acc ? p->tau : p->burst_acc;
+  uint64 key = p->tau > p->burst_acc ? p->tau : p->burst_acc;
+  if (sched_aging > 0) {
+    uint64 credit = (now - p->readyat) / sched_aging;
+    key = key > credit ? key - credit : 0;
+  }
+  return key;
 }
 
 // Choose the next process to run on this CPU, or 0 if none is RUNNABLE.
@@ -471,6 +485,7 @@ pick(struct cpu *c)
 {
   struct proc *best = 0;
   uint64 bestkey = 0;
+  uint64 now = r_time();
 
   for (int i = 1; i <= NPROC; i++) {
     struct proc *p = &proc[(c->last + i) % NPROC];
@@ -480,7 +495,7 @@ pick(struct cpu *c)
         release(&p->lock);
         return p;
       }
-      uint64 key = burst_key(p);
+      uint64 key = burst_key(p, now);
       if (best == 0 || key < bestkey) {
         best = p;
         bestkey = key;
@@ -597,6 +612,7 @@ yield(void)
   struct proc *p = myproc();
   acquire(&p->lock);
   p->state = RUNNABLE;
+  p->readyat = r_time();
   sched();
   release(&p->lock);
 }
@@ -682,7 +698,8 @@ wakeup(void *chan)
       // go to sleep, also set it back to RUNNING.
       if (p->state == SLEEPING) {
         p->state = RUNNABLE;
-        trace_record(TR_WAKE, p->pid, cpuid(), r_time(), 0, 0, p->name);
+        p->readyat = r_time();
+        trace_record(TR_WAKE, p->pid, cpuid(), p->readyat, 0, 0, p->name);
       }
     }
     release(&p->lock);
@@ -707,6 +724,7 @@ kkill(int pid)
       if (p->state == SLEEPING) {
         // Wake process from sleep().
         p->state = RUNNABLE;
+        p->readyat = r_time();
       }
       release(&p->lock);
       return 0;
@@ -792,7 +810,8 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    printk("%d %s %s", p->pid, state, p->name);
+    printk("%d %s %s tau=%lu acc=%lu n=%lu ready=%lu now=%lu", p->pid, state,
+           p->name, p->tau, p->burst_acc, p->nbursts, p->readyat, r_time());
     printk("\n");
   }
 }
