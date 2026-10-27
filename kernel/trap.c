@@ -6,6 +6,9 @@
 #include "proc.h"
 #include "defs.h"
 
+// Interval of the global tick (ticks, pause(), uptime()): 100 ms.
+#define TICK 1000000
+
 struct spinlock tickslock;
 uint ticks;
 
@@ -26,6 +29,9 @@ trapinit(void)
 void
 trapinithart(void)
 {
+  struct cpu *c = mycpu();
+  c->next_tick = r_time() + TICK;
+  c->quantum_end = ~0ULL;
   w_stvec((uint64)kernelvec);
 }
 
@@ -163,20 +169,49 @@ kerneltrap()
   w_sstatus(sstatus);
 }
 
+// Program the timer for whichever comes first: this hart's next tick,
+// or the end of the running process's quantum (set by scheduler() at
+// dispatch, ~0 when nothing is running). Interrupts must be off.
 void
+timer_arm(void)
+{
+  struct cpu *c = mycpu();
+  uint64 when = c->next_tick;
+  if (c->quantum_end < when)
+    when = c->quantum_end;
+  w_stimecmp(when);
+}
+
+// Timer interrupt. Advances the tick count on its own schedule, so
+// timekeeping does not depend on how often processes are dispatched,
+// and separately checks whether the running process's quantum is up.
+// Returns 1 if it is, which makes the trap handler yield().
+int
 clockintr()
 {
-  if (cpuid() == 0) {
-    acquire(&tickslock);
-    ticks++;
-    wakeup(&ticks);
-    release(&tickslock);
+  struct cpu *c = mycpu();
+  uint64 now = r_time();
+  int expired = 0;
+
+  if (now >= c->next_tick) {
+    do {
+      c->next_tick += TICK;
+    } while (c->next_tick <= now);
+    if (cpuid() == 0) {
+      acquire(&tickslock);
+      ticks++;
+      wakeup(&ticks);
+      release(&tickslock);
+    }
   }
 
-  // ask for the next timer interrupt. this also clears
-  // the interrupt request. 1000000 is about a tenth
-  // of a second.
-  w_stimecmp(r_time() + 1000000);
+  if (c->proc != 0 && now >= c->quantum_end) {
+    expired = 1;
+    c->quantum_end = ~0ULL; // the next dispatch sets a new one
+  }
+
+  timer_arm(); // also clears the interrupt request
+  return expired;
 }
 
 // check if it's an external interrupt or software interrupt,
@@ -211,9 +246,9 @@ devintr()
 
     return 1;
   } else if (scause == 0x8000000000000005L) {
-    // timer interrupt.
-    clockintr();
-    return 2;
+    // timer interrupt. 2 (yield) only if the quantum expired; a bare
+    // tick counts as "some other device", which the callers ignore.
+    return clockintr() ? 2 : 1;
   } else {
     return 0;
   }

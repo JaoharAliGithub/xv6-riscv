@@ -93,6 +93,7 @@ struct cpu*     mycpu(void);
 struct proc*    myproc();
 void            procinit(void);
 void            scheduler(void) __attribute__((noreturn));
+extern uint64   sched_quantum;
 void            sched(void);
 void            sleep_prepare(void*);
 void            sleep(void);
@@ -106,6 +107,9 @@ void            procdump(void);
 
 // swtch.S
 void            swtch(struct context*, struct context*);
+
+// trap.c
+void            timer_arm(void);
 
 // trace.c
 void            traceinit(void);

@@ -6,6 +6,7 @@
 #include "proc.h"
 #include "defs.h"
 #include "trace.h"
+#include "sched.h"
 
 struct cpu cpus[NCPU];
 
@@ -421,6 +422,10 @@ kwait(uint64 addr)
   }
 }
 
+// Scheduling quantum, in r_time() units. Armed at every dispatch; see
+// timer_arm() in trap.c.
+uint64 sched_quantum = (uint64)SCHED_QUANTUM_US * 10;
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -454,6 +459,8 @@ scheduler(void)
         p->state = RUNNING;
         c->proc = p;
         uint64 t0 = r_time();
+        c->quantum_end = t0 + sched_quantum;
+        timer_arm();
         swtch(&c->context, &p->context);
         uint64 t1 = r_time();
 
@@ -472,6 +479,7 @@ scheduler(void)
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
+        c->quantum_end = ~0ULL;
         found = 1;
       }
       release(&p->lock);

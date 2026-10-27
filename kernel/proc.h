@@ -24,6 +24,8 @@ struct cpu {
   struct context context; // swtch() here to enter scheduler().
   int noff;               // Depth of push_off() nesting.
   int intena;             // Were interrupts enabled before push_off()?
+  uint64 next_tick;       // r_time() of the next 100 ms tick on this hart
+  uint64 quantum_end;     // r_time() when the running process's quantum ends
 };
 
 extern struct cpu cpus[NCPU];
