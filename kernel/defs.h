@@ -107,6 +107,10 @@ void            procdump(void);
 // swtch.S
 void            swtch(struct context*, struct context*);
 
+// trace.c
+void            traceinit(void);
+void            trace_record(int, int, int, uint64, uint64, int, char *);
+
 // spinlock.c
 void            acquire(struct spinlock*);
 int             holding(struct spinlock*);

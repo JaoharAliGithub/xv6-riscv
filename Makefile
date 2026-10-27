@@ -13,6 +13,7 @@ OBJS = \
   $K/main.o \
   $K/vm.o \
   $K/proc.o \
+  $K/trace.o \
   $K/swtch.o \
   $K/trampoline.o \
   $K/trap.o \
@@ -147,6 +148,7 @@ UPROGS=\
 	$U/_grind\
 	$U/_wc\
 	$U/_zombie\
+	$U/_tracedump\
 	$U/_logstress\
 	$U/_forphan\
 	$U/_dorphan\

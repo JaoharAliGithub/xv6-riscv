@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "trace.h"
 
 struct cpu cpus[NCPU];
 
@@ -301,6 +302,8 @@ kfork(void)
   np->state = RUNNABLE;
   release(&np->lock);
 
+  trace_record(TR_FORK, pid, 0xff, r_time(), 0, p->pid, np->name);
+
   return pid;
 }
 
@@ -450,10 +453,21 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        uint64 t0 = r_time();
         swtch(&c->context, &p->context);
+        uint64 t1 = r_time();
 
         // Don't re-enable interrupts on release.
         mycpu()->intena = 0;
+
+        // Why the burst ended: yield() is only reached from the timer,
+        // so RUNNABLE means preempted; SLEEPING means blocked; ZOMBIE
+        // means exited. We still hold p->lock, so the state is stable.
+        int why = p->state == RUNNABLE ? TR_PREEMPT
+                : p->state == SLEEPING ? TR_SLEEP
+                : p->state == ZOMBIE   ? TR_EXIT
+                                       : TR_OTHER;
+        trace_record(TR_BURST, p->pid, cpuid(), t0, t1 - t0, why, p->name);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
