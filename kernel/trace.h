@@ -8,6 +8,7 @@
 #define TR_FORK  1 // process created; aux = parent pid
 #define TR_BURST 2 // CPU burst ended; aux = reason below
 #define TR_DROP  3 // records were dropped (buffer full); aux = count
+#define TR_WAKE  4 // process became RUNNABLE after sleeping; aux = 0
 
 // burst end reasons (TR_BURST aux), from p->state after swtch returns
 #define TR_PREEMPT 1 // timer interrupt -> yield(), still RUNNABLE

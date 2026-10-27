@@ -2,7 +2,7 @@
 // tracedump cmd [args]   discard the trace, run cmd, wait, then print
 //
 // CSV columns: type,pid,cpu,t,len,aux,name
-//   type: fork | burst | drop
+//   type: fork | burst | wake | drop
 //   t, len: r_time() units (100 ns on QEMU virt)
 //   aux: burst -> preempt|sleep|exit|other; fork -> parent pid;
 //        drop -> number of records lost
@@ -38,6 +38,8 @@ drain(int print)
                                          : "other";
         printf("burst,%d,%d,%lu,%lu,%s,%s\n", r->pid, r->cpu, r->t, r->len,
                why, r->name);
+      } else if (r->type == TR_WAKE) {
+        printf("wake,%d,%d,%lu,0,,%s\n", r->pid, r->cpu, r->t, r->name);
       } else if (r->type == TR_FORK) {
         printf("fork,%d,,%lu,0,%d,%s\n", r->pid, r->t, r->aux, r->name);
       } else if (r->type == TR_DROP) {

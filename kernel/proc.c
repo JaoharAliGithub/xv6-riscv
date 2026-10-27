@@ -610,6 +610,7 @@ wakeup(void *chan)
       // go to sleep, also set it back to RUNNING.
       if (p->state == SLEEPING) {
         p->state = RUNNABLE;
+        trace_record(TR_WAKE, p->pid, cpuid(), r_time(), 0, 0, p->name);
       }
     }
     release(&p->lock);
