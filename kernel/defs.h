@@ -93,6 +93,7 @@ struct cpu*     mycpu(void);
 struct proc*    myproc();
 void            procinit(void);
 void            scheduler(void) __attribute__((noreturn));
+extern int      sched_policy;
 extern uint64   sched_quantum;
 void            sched(void);
 void            sleep_prepare(void*);

@@ -27,6 +27,7 @@ int uptime(void);
 int sync(void);
 struct tracerec;
 int tracedump(struct tracerec *, int);
+int setsched(int, int);
 
 // ulib.c
 int stat(const char *, struct stat *);

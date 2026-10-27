@@ -26,6 +26,7 @@ struct cpu {
   int intena;             // Were interrupts enabled before push_off()?
   uint64 next_tick;       // r_time() of the next 100 ms tick on this hart
   uint64 quantum_end;     // r_time() when the running process's quantum ends
+  int last;               // proc[] index of the last dispatched process
 };
 
 extern struct cpu cpus[NCPU];
@@ -90,6 +91,11 @@ struct proc {
   int killed;           // If non-zero, have been killed
   int xstate;           // Exit status to be returned to parent's wait
   int pid;              // Process ID
+
+  // Burst prediction, used by the SJF policy (p->lock held):
+  uint64 tau;           // predicted length of the next CPU burst
+  uint64 burst_acc;     // CPU time so far in the current (unfinished) burst
+  uint64 nbursts;       // completed bursts, for tau's first sample
 
   // wait_lock must be held when using this:
   struct proc *parent; // Parent process

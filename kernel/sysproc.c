@@ -5,6 +5,7 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "sched.h"
 #include "vm.h"
 
 uint64
@@ -109,4 +110,26 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+// int setsched(int policy, int quantum_us)
+// Sets the scheduling policy (SCHED_RR / SCHED_SJF, -1 = unchanged) and
+// the quantum in microseconds (<= 0 = unchanged). Returns the previous
+// policy. A quantum shorter than the 1 us host timer resolution would
+// just thrash, so it is clamped to 100 us.
+uint64
+sys_setsched(void)
+{
+  int policy, quantum_us;
+  int old = sched_policy;
+
+  argint(0, &policy);
+  argint(1, &quantum_us);
+  if (policy == SCHED_RR || policy == SCHED_SJF)
+    sched_policy = policy;
+  else if (policy != -1)
+    return -1;
+  if (quantum_us > 0)
+    sched_quantum = (uint64)(quantum_us < 100 ? 100 : quantum_us) * 10;
+  return old;
 }

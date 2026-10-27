@@ -126,6 +126,9 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->tau = 0;
+  p->burst_acc = 0;
+  p->nbursts = 0;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -422,15 +425,77 @@ kwait(uint64 addr)
   }
 }
 
-// Scheduling quantum, in r_time() units. Armed at every dispatch; see
-// timer_arm() in trap.c.
-uint64 sched_quantum = (uint64)SCHED_QUANTUM_US * 10;
+// Scheduling policy and quantum, settable at run time with setsched(2).
+// Read without locks: a torn read only affects which process runs next.
+int sched_policy = SCHED_RR;
+uint64 sched_quantum = (uint64)SCHED_QUANTUM_US * 10; // r_time() units
+
+// Update p's burst prediction after it ran for len units and stopped
+// for reason why. A CPU burst, in the SJF sense, is the CPU time between
+// two blocking events; a preemption only slices it, so preempted time
+// accumulates and the predictor is updated when the burst completes.
+// tau is exponential averaging, tau_0 = the first completed burst.
+// Caller holds p->lock.
+static void
+burst_update(struct proc *p, uint64 len, int why)
+{
+  p->burst_acc += len;
+  if (why == TR_PREEMPT)
+    return;
+  uint64 t = p->burst_acc;
+  p->burst_acc = 0;
+  if (p->nbursts++ == 0)
+    p->tau = t;
+  else
+    p->tau = (SCHED_ALPHA * t + (256 - SCHED_ALPHA) * p->tau) >> 8;
+}
+
+// SJF ranking key, lower runs first: the predicted length of p's
+// current burst. The burst is known to be at least burst_acc long
+// already, so a process that has outrun its prediction is ranked by
+// what it has shown, not by tau; that is what demotes a CPU hog whose
+// prediction is stale. Caller holds p->lock.
+static inline uint64
+burst_key(struct proc *p)
+{
+  return p->tau > p->burst_acc ? p->tau : p->burst_acc;
+}
+
+// Choose the next process to run on this CPU, or 0 if none is RUNNABLE.
+// Scans the table starting after the last dispatched process so that
+// round-robin keeps its order and SJF breaks ties the same way. Each
+// p->lock is released again before returning, so the caller must
+// re-acquire it and re-check RUNNABLE.
+static struct proc *
+pick(struct cpu *c)
+{
+  struct proc *best = 0;
+  uint64 bestkey = 0;
+
+  for (int i = 1; i <= NPROC; i++) {
+    struct proc *p = &proc[(c->last + i) % NPROC];
+    acquire(&p->lock);
+    if (p->state == RUNNABLE) {
+      if (sched_policy != SCHED_SJF) {
+        release(&p->lock);
+        return p;
+      }
+      uint64 key = burst_key(p);
+      if (best == 0 || key < bestkey) {
+        best = p;
+        bestkey = key;
+      }
+    }
+    release(&p->lock);
+  }
+  return best;
+}
 
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
-//  - choose a process to run.
-//  - swtch to start running that process.
+//  - choose a process to run (pick), by the current policy.
+//  - swtch to start running that process, with a fresh quantum.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
 void
@@ -440,6 +505,7 @@ scheduler(void)
   struct cpu *c = mycpu();
 
   c->proc = 0;
+  c->last = NPROC - 1; // so the first scan starts at proc[0]
   for (;;) {
     // The most recent process to run may have had interrupts
     // turned off; enable them to avoid a deadlock if all
@@ -449,45 +515,51 @@ scheduler(void)
     intr_on();
     intr_off();
 
-    int found = 0;
-    for (p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if (p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        uint64 t0 = r_time();
-        c->quantum_end = t0 + sched_quantum;
-        timer_arm();
-        swtch(&c->context, &p->context);
-        uint64 t1 = r_time();
-
-        // Don't re-enable interrupts on release.
-        mycpu()->intena = 0;
-
-        // Why the burst ended: yield() is only reached from the timer,
-        // so RUNNABLE means preempted; SLEEPING means blocked; ZOMBIE
-        // means exited. We still hold p->lock, so the state is stable.
-        int why = p->state == RUNNABLE ? TR_PREEMPT
-                : p->state == SLEEPING ? TR_SLEEP
-                : p->state == ZOMBIE   ? TR_EXIT
-                                       : TR_OTHER;
-        trace_record(TR_BURST, p->pid, cpuid(), t0, t1 - t0, why, p->name);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-        c->quantum_end = ~0ULL;
-        found = 1;
-      }
-      release(&p->lock);
-    }
-    if (found == 0) {
+    p = pick(c);
+    if (p == 0) {
       // nothing to run; stop running on this core until an interrupt.
       asm volatile("wfi");
+      continue;
     }
+
+    // pick() dropped p->lock, so another hart may have taken p
+    // since. Re-check under the lock and start over if so.
+    acquire(&p->lock);
+    if (p->state != RUNNABLE) {
+      release(&p->lock);
+      continue;
+    }
+    c->last = p - proc;
+
+    // Switch to chosen process.  It is the process's job
+    // to release its lock and then reacquire it
+    // before jumping back to us.
+    p->state = RUNNING;
+    c->proc = p;
+    uint64 t0 = r_time();
+    c->quantum_end = t0 + sched_quantum;
+    timer_arm();
+    swtch(&c->context, &p->context);
+    uint64 t1 = r_time();
+
+    // Don't re-enable interrupts on release.
+    mycpu()->intena = 0;
+
+    // Why the burst ended: yield() is only reached on quantum expiry,
+    // so RUNNABLE means preempted; SLEEPING means blocked; ZOMBIE
+    // means exited. We still hold p->lock, so the state is stable.
+    int why = p->state == RUNNABLE ? TR_PREEMPT
+            : p->state == SLEEPING ? TR_SLEEP
+            : p->state == ZOMBIE   ? TR_EXIT
+                                   : TR_OTHER;
+    burst_update(p, t1 - t0, why);
+    trace_record(TR_BURST, p->pid, cpuid(), t0, t1 - t0, why, p->name);
+
+    // Process is done running for now.
+    // It should have changed its p->state before coming back.
+    c->proc = 0;
+    c->quantum_end = ~0ULL;
+    release(&p->lock);
   }
 }
 
